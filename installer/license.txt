@@ -1,0 +1,8 @@
+FocusGuard - Termos de Uso (placeholder)
+
+Este instalador e software sao fornecidos "como estao", sem garantias de qualquer tipo.
+Ao instalar e utilizar o FocusGuard, voce concorda em usar a ferramenta de forma responsavel
+e em conformidade com as leis aplicaveis.
+
+Este texto e um placeholder inicial para a tela de licenca do instalador.
+Substitua por termos oficiais antes de distribuir comercialmente.
