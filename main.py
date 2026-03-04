@@ -1124,7 +1124,9 @@ class FocusGuardApp(ctk.CTk):
                 variable=switch_var,
                 onvalue="on",
                 offvalue="off",
-                command=lambda g=group_name, var=switch_var, sw=enabled_switch: self.set_group_enabled(g, var.get() == "on", switch_widget=sw),
+            )
+            enabled_switch.configure(
+                command=lambda g=group_name, var=switch_var, sw=enabled_switch: self.set_group_enabled(g, var.get() == "on", switch_widget=sw)
             )
             enabled_switch.grid(row=0, column=1, padx=(0, 8), pady=2)
             if self.group_enabled.get(group_name, True):
