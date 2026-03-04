@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
-from typing import Dict, List, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import customtkinter as ctk
 import psutil
@@ -82,6 +82,11 @@ class ScheduleRule:
         )
 
 
+UNLOCK_LEVELS = ("easy", "medium", "hard", "extreme")
+UNLOCK_LEVEL_CHALLENGES = {"easy": 5, "medium": 10, "hard": 25, "extreme": 50}
+EXTREME_LIVES = 3
+
+
 @dataclass
 class AppSettings:
     """Configurações persistentes do aplicativo."""
@@ -89,6 +94,7 @@ class AppSettings:
     start_with_windows: bool = False
     unlock_difficulty_enabled: bool = False
     unlock_password_hash: str = ""
+    unlock_difficulty_level: str = "medium"
 
     def to_dict(self) -> Dict[str, object]:
         """Converte settings para dicionário JSON."""
@@ -96,6 +102,7 @@ class AppSettings:
             "start_with_windows": self.start_with_windows,
             "unlock_difficulty_enabled": self.unlock_difficulty_enabled,
             "unlock_password_hash": self.unlock_password_hash,
+            "unlock_difficulty_level": self.unlock_difficulty_level,
         }
 
     @staticmethod
@@ -104,11 +111,242 @@ class AppSettings:
         startup_value = data.get("start_with_windows", False)
         difficulty_value = data.get("unlock_difficulty_enabled", False)
         password_hash = data.get("unlock_password_hash", "")
+        level = data.get("unlock_difficulty_level", "medium")
+        if level not in UNLOCK_LEVELS:
+            level = "medium"
         return AppSettings(
             start_with_windows=bool(startup_value),
             unlock_difficulty_enabled=bool(difficulty_value),
             unlock_password_hash=password_hash if isinstance(password_hash, str) else "",
+            unlock_difficulty_level=level,
         )
+
+
+def _build_question_pool() -> List[Callable[[], Tuple[str, str]]]:
+    """Retorna lista de 50 geradores de perguntas (prompt, resposta) para desbloqueio."""
+
+    def q_add() -> Tuple[str, str]:
+        a, b = random.randint(12, 59), random.randint(7, 41)
+        return (f"Resolva: {a} + {b} = ?", str(a + b))
+
+    def q_sub() -> Tuple[str, str]:
+        a, b = random.randint(30, 99), random.randint(10, 29)
+        return (f"Resolva: {a} - {b} = ?", str(a - b))
+
+    def q_mul() -> Tuple[str, str]:
+        a, b = random.randint(3, 12), random.randint(4, 12)
+        return (f"Resolva: {a} × {b} = ?", str(a * b))
+
+    def q_mul_chain() -> Tuple[str, str]:
+        a, b, c = random.randint(2, 9), random.randint(2, 9), random.randint(2, 5)
+        return (f"Resolva: ({a} + {b}) × {c} = ?", str((a + b) * c))
+
+    def q_last_digit() -> Tuple[str, str]:
+        n = random.randint(100, 999)
+        return (f"Qual o último dígito de {n}?", str(n % 10))
+
+    def q_seq_even() -> Tuple[str, str]:
+        start = random.randint(2, 10) * 2
+        seq = [start + i * 2 for i in range(4)]
+        next_val = start + 8
+        return (f"Qual o próximo número na sequência: {seq[0]}, {seq[1]}, {seq[2]}, {seq[3]}?", str(next_val))
+
+    def q_seq_odd() -> Tuple[str, str]:
+        start = random.randint(1, 9) * 2 - 1
+        seq = [start + i * 2 for i in range(4)]
+        next_val = start + 8
+        return (f"Qual o próximo número na sequência: {seq[0]}, {seq[1]}, {seq[2]}, {seq[3]}?", str(next_val))
+
+    def q_power2() -> Tuple[str, str]:
+        exp = random.randint(2, 5)
+        base = random.choice([2, 3, 4, 5])
+        return (f"Resolva: {base}^{exp} = ?", str(base**exp))
+
+    def q_sqrt() -> Tuple[str, str]:
+        n = random.choice([9, 16, 25, 36, 49, 64, 81, 100, 121, 144])
+        r = int(n**0.5)
+        return (f"Qual a raiz quadrada de {n}?", str(r))
+
+    def q_reverse_word() -> Tuple[str, str]:
+        words = ["focus", "guard", "produtividade", "rotina", "controle", "disciplina", "objetivo", "bloqueio", "senha", "tempo"]
+        w = random.choice(words)
+        return (f"Digite a palavra ao contrário: {w}", w[::-1])
+
+    def q_word_len() -> Tuple[str, str]:
+        words = ["palavra", "computador", "teclado", "monitor", "aplicativo", "janela", "arquivo", "pasta"]
+        w = random.choice(words)
+        return (f"Quantas letras tem a palavra '{w}'?", str(len(w)))
+
+    def q_first_letter() -> Tuple[str, str]:
+        words = ["FocusGuard", "Windows", "Bloco", "Senha", "Produto"]
+        w = random.choice(words)
+        return (f"Qual a primeira letra de '{w}'? (maiúscula ou minúscula)", w[0])
+
+    def q_sum_digits() -> Tuple[str, str]:
+        n = random.randint(100, 999)
+        ans = sum(int(d) for d in str(n))
+        return (f"Some os dígitos de {n}. Qual o resultado?", str(ans))
+
+    def q_pct() -> Tuple[str, str]:
+        pct = random.choice([10, 15, 20, 25])
+        num = random.choice([200, 300, 400, 100, 500])
+        return (f"Quanto é {pct}% de {num}?", str(num * pct // 100))
+
+    def q_minutes() -> Tuple[str, str]:
+        h = random.randint(1, 5)
+        return (f"Quantos minutos há em {h} hora(s)?", str(h * 60))
+
+    def q_expr1() -> Tuple[str, str]:
+        a, b, c = random.randint(2, 6), random.randint(2, 6), random.randint(1, 5)
+        return (f"Resolva: {a} × {b} + {c} = ?", str(a * b + c))
+
+    def q_expr2() -> Tuple[str, str]:
+        a, b, c = random.randint(5, 12), random.randint(2, 5), random.randint(1, 5)
+        return (f"Resolva: ({a} - {b}) × {c} = ?", str((a - b) * c))
+
+    def q_smallest() -> Tuple[str, str]:
+        a, b, c = random.sample(range(10, 99), 3)
+        return (f"Qual o menor número entre {a}, {b} e {c}?", str(min(a, b, c)))
+
+    def q_median() -> Tuple[str, str]:
+        a, b, c = sorted(random.sample(range(10, 99), 3))
+        return (f"Qual o número do meio (mediana) entre {a}, {b} e {c}?", str(b))
+
+    def q_sub_big() -> Tuple[str, str]:
+        a, b = random.randint(50, 99), random.randint(10, 49)
+        return (f"Resolva: {a} - {b} = ?", str(a - b))
+
+    def q_square() -> Tuple[str, str]:
+        n = random.randint(5, 15)
+        return (f"Quanto é {n} × {n}?", str(n * n))
+
+    def q_mul_small() -> Tuple[str, str]:
+        a, b = random.randint(10, 20), random.randint(2, 5)
+        return (f"Resolva: {a} × {b} = ?", str(a * b))
+
+    def q_div() -> Tuple[str, str]:
+        b = random.randint(2, 12)
+        c = random.randint(5, 15)
+        a = b * c
+        return (f"Resolva: {a} ÷ {b} = ?", str(c))
+
+    def q_sum_four() -> Tuple[str, str]:
+        nums = [random.randint(1, 15) for _ in range(4)]
+        return (f"Some: {nums[0]} + {nums[1]} + {nums[2]} + {nums[3]} = ?", str(sum(nums)))
+
+    def q_ten_sq() -> Tuple[str, str]:
+        return ("Quanto é 10 × 10?", "100")
+
+    def q_add_two() -> Tuple[str, str]:
+        a, b = random.randint(15, 49), random.randint(15, 49)
+        return (f"Resolva: {a} + {b} = ?", str(a + b))
+
+    def q_sub_two() -> Tuple[str, str]:
+        a, b = random.randint(30, 99), random.randint(10, 29)
+        return (f"Resolva: {a} - {b} = ?", str(a - b))
+
+    def q_mul67() -> Tuple[str, str]:
+        return ("Resolva: 6 × 7 = ?", "42")
+
+    def q_div9() -> Tuple[str, str]:
+        n = random.choice([18, 27, 36, 45, 54, 63, 72, 81])
+        return (f"Resolva: {n} ÷ 9 = ?", str(n // 9))
+
+    def q_pow2_2() -> Tuple[str, str]:
+        e = random.randint(2, 6)
+        return (f"Resolva: 2^{e} = ?", str(2**e))
+
+    def q_pow5() -> Tuple[str, str]:
+        return ("Quanto é 5²?", "25")
+
+    def q_pow10() -> Tuple[str, str]:
+        return ("Quanto é 10²?", "100")
+
+    def q_half_pct() -> Tuple[str, str]:
+        return ("Quanto é 50% de 100?", "50")
+
+    def q_quarter() -> Tuple[str, str]:
+        n = random.choice([80, 40, 100, 60])
+        return (f"Quanto é 1/4 de {n}?", str(n // 4))
+
+    def q_three_quarters() -> Tuple[str, str]:
+        n = random.choice([20, 40, 80, 100])
+        return (f"Quanto é 3/4 de {n}?", str(3 * n // 4))
+
+    def q_double() -> Tuple[str, str]:
+        n = random.randint(20, 49)
+        return (f"Quanto é o dobro de {n}?", str(n * 2))
+
+    def q_half() -> Tuple[str, str]:
+        n = random.randint(20, 99)
+        if n % 2 != 0:
+            n -= 1
+        return (f"Quanto é a metade de {n}?", str(n // 2))
+
+    def q_add_30_45() -> Tuple[str, str]:
+        a, b = random.randint(25, 40), random.randint(40, 55)
+        return (f"Resolva: {a} + {b} = ?", str(a + b))
+
+    def q_sub_99() -> Tuple[str, str]:
+        a = random.randint(85, 99)
+        b = random.randint(10, 25)
+        return (f"Resolva: {a} - {b} = ?", str(a - b))
+
+    def q_11_sq() -> Tuple[str, str]:
+        return ("Quanto é 11 × 11?", "121")
+
+    def q_13x2() -> Tuple[str, str]:
+        return ("Resolva: 13 × 2 = ?", "26")
+
+    def q_100div4() -> Tuple[str, str]:
+        return ("Resolva: 100 ÷ 4 = ?", "25")
+
+    def q_72div8() -> Tuple[str, str]:
+        return ("Resolva: 72 ÷ 8 = ?", "9")
+
+    def q_add_19_27() -> Tuple[str, str]:
+        a, b = random.randint(15, 25), random.randint(22, 35)
+        return (f"Resolva: {a} + {b} = ?", str(a + b))
+
+    def q_sub_63() -> Tuple[str, str]:
+        a = random.randint(60, 70)
+        b = random.randint(25, 35)
+        return (f"Resolva: {a} - {b} = ?", str(a - b))
+
+    def q_largest_digit() -> Tuple[str, str]:
+        a, b, c = random.randint(0, 9), random.randint(0, 9), random.randint(0, 9)
+        return (f"Qual o maior dígito entre {a}, {b} e {c}?", str(max(a, b, c)))
+
+    def q_repeat_number() -> Tuple[str, str]:
+        n = random.randint(1000, 9999)
+        return (f"Repita exatamente este número: {n}", str(n))
+
+    def q_seq_linear() -> Tuple[str, str]:
+        start = random.randint(1, 5)
+        step = random.randint(2, 4)
+        seq = [start + i * step for i in range(4)]
+        next_val = start + 4 * step
+        return (f"Qual o próximo número: {seq[0]}, {seq[1]}, {seq[2]}, {seq[3]}?", str(next_val))
+
+    def q_seq_squares() -> Tuple[str, str]:
+        seq = [1, 4, 9, 16]
+        return ("Qual o próximo número na sequência: 1, 4, 9, 16?", "25")
+
+    def q_144div12() -> Tuple[str, str]:
+        return ("Resolva: 144 ÷ 12 = ?", "12")
+
+    return [
+        q_add, q_sub, q_mul, q_mul_chain, q_last_digit, q_seq_even, q_seq_odd, q_power2, q_sqrt,
+        q_reverse_word, q_word_len, q_first_letter, q_sum_digits, q_pct, q_minutes, q_expr1, q_expr2,
+        q_smallest, q_median, q_sub_big, q_square, q_mul_small, q_div, q_sum_four, q_ten_sq,
+        q_add_two, q_sub_two, q_mul67, q_div9, q_pow2_2, q_pow5, q_pow10, q_half_pct, q_quarter,
+        q_three_quarters, q_double, q_half, q_add_30_45, q_sub_99, q_11_sq, q_13x2, q_100div4,
+        q_72div8, q_add_19_27, q_sub_63, q_largest_digit, q_repeat_number, q_seq_linear,
+        q_seq_squares, q_144div12,
+    ]
+
+
+UNLOCK_QUESTION_POOL: List[Callable[[], Tuple[str, str]]] = _build_question_pool()
 
 
 class FocusGuardApp(ctk.CTk):
@@ -514,47 +752,127 @@ class FocusGuardApp(ctk.CTk):
         ]
         return random.choice(words)
 
-    def _build_unlock_puzzles(self) -> List[tuple[str, str]]:
-        """Monta coleção de puzzles possíveis para desbloqueio."""
-        first_number = random.randint(12, 59)
-        second_number = random.randint(7, 41)
-        arithmetic_prompt = (
-            "Puzzle 1/3\n"
-            f"Resolva: {first_number} + {second_number} = ?"
+    def _minigame_memory(self) -> bool:
+        """Minigame: memorizar sequência de 8 dígitos exibida por 2,5 s."""
+        sequence = "".join(str(random.randint(0, 9)) for _ in range(8))
+        tw = ctk.CTkToplevel(self)
+        tw.title("Minigame: Memória")
+        tw.geometry("320x140")
+        tw.resizable(False, False)
+        lbl = ctk.CTkLabel(tw, text=sequence, font=ctk.CTkFont(size=28))
+        lbl.pack(expand=True, padx=20, pady=20)
+        tw.after(2500, tw.destroy)
+        tw.wait_window()
+        dialog = ctk.CTkInputDialog(
+            text="Digite a sequência de 8 dígitos que apareceu:",
+            title="Minigame: Memória",
         )
+        ans = dialog.get_input()
+        return ans is not None and ans.strip() == sequence
 
-        word = self._random_word()
-        reverse_prompt = (
-            "Puzzle 2/3\n"
-            f"Digite esta palavra ao contrário: {word}"
+    def _minigame_type_exact(self) -> bool:
+        """Minigame: memorizar e digitar string de 12 caracteres exibida por 3 s."""
+        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        target = "".join(random.choices(chars, k=12))
+        tw = ctk.CTkToplevel(self)
+        tw.title("Minigame: Digitação")
+        tw.geometry("400x120")
+        tw.resizable(False, False)
+        lbl = ctk.CTkLabel(tw, text=target, font=ctk.CTkFont(size=22))
+        lbl.pack(expand=True, padx=20, pady=20)
+        tw.after(3000, tw.destroy)
+        tw.wait_window()
+        dialog = ctk.CTkInputDialog(
+            text="Digite exatamente o que viu (12 caracteres):",
+            title="Minigame: Digitação",
         )
+        ans = dialog.get_input()
+        return ans is not None and ans.strip() == target
 
-        digit_a = random.randint(0, 9)
-        digit_b = random.randint(0, 9)
-        digit_c = random.randint(0, 9)
-        largest_prompt = (
-            "Puzzle 3/3\n"
-            f"Qual é o maior dígito em: {digit_a}, {digit_b}, {digit_c}?"
+    def _minigame_math_chain(self) -> bool:
+        """Minigame: expressão aritmética difícil (a+b)×c - d."""
+        a, b = random.randint(5, 18), random.randint(5, 18)
+        c, d = random.randint(2, 6), random.randint(5, 25)
+        result = (a + b) * c - d
+        dialog = ctk.CTkInputDialog(
+            text=f"Resolva: ({a} + {b}) × {c} - {d} = ?",
+            title="Minigame: Cadeia matemática",
         )
+        ans = dialog.get_input()
+        return ans is not None and ans.strip() == str(result)
 
-        sequence_value = random.randint(1000, 9999)
-        typing_prompt = (
-            "Puzzle 4/3\n"
-            f"Repita exatamente este número: {sequence_value}"
-        )
-
-        return [
-            (arithmetic_prompt, str(first_number + second_number)),
-            (reverse_prompt, word[::-1]),
-            (largest_prompt, str(max(digit_a, digit_b, digit_c))),
-            (typing_prompt, str(sequence_value)),
+    def _minigame_count_letter(self) -> bool:
+        """Minigame: contar ocorrências de uma letra em um texto."""
+        paragraphs = [
+            "O FocusGuard bloqueia aplicativos para aumentar sua produtividade. Use com sabedoria e disciplina.",
+            "A rotina de estudos exige foco e persistência. Evite distrações e mantenha o controle do tempo.",
+            "Produtividade depende de escolhas diárias. Bloqueie o que atrapalha e libere o que importa.",
         ]
+        text = random.choice(paragraphs)
+        letter = random.choice("aeosr")
+        count = text.lower().count(letter)
+        dialog = ctk.CTkInputDialog(
+            text=f"Quantas vezes aparece a letra '{letter}' (minúscula) no texto?\n\n{text}",
+            title="Minigame: Contagem",
+        )
+        ans = dialog.get_input()
+        return ans is not None and ans.strip() == str(count)
+
+    def _minigame_sequence_next(self) -> bool:
+        """Minigame: próximo número em sequência quadrada (1,4,9,16,25 -> 36)."""
+        seq = [1, 4, 9, 16, 25]
+        dialog = ctk.CTkInputDialog(
+            text="Qual o próximo número na sequência: 1, 4, 9, 16, 25?",
+            title="Minigame: Sequência",
+        )
+        ans = dialog.get_input()
+        return ans is not None and ans.strip() == "36"
+
+    def _minigame_reaction_sum(self) -> bool:
+        """Minigame: soma de três números de dois dígitos."""
+        a, b, c = random.randint(10, 49), random.randint(10, 49), random.randint(10, 49)
+        result = a + b + c
+        dialog = ctk.CTkInputDialog(
+            text=f"Some rapidamente: {a} + {b} + {c} = ?",
+            title="Minigame: Soma rápida",
+        )
+        ans = dialog.get_input()
+        return ans is not None and ans.strip() == str(result)
+
+    _UNLOCK_MINIGAME_METHODS: List[str] = [
+        "_minigame_memory",
+        "_minigame_type_exact",
+        "_minigame_math_chain",
+        "_minigame_count_letter",
+        "_minigame_sequence_next",
+        "_minigame_reaction_sum",
+    ]
+
+    def _build_unlock_steps(self, total: int) -> List[Tuple[str, str, str]]:
+        """Monta lista de passos (perguntas e minigames) alternando e embaralhando."""
+        n_questions = total // 2
+        n_minigames = total - n_questions
+        pool = UNLOCK_QUESTION_POOL
+        question_steps: List[Tuple[str, str, str]] = []
+        for _ in range(n_questions):
+            gen = random.choice(pool)
+            prompt, answer = gen()
+            question_steps.append(("q", prompt, answer))
+        methods = self._UNLOCK_MINIGAME_METHODS
+        minigame_steps: List[Tuple[str, str, str]] = []
+        if methods:
+            for i in range(n_minigames):
+                minigame_steps.append(("m", methods[i % len(methods)], ""))
+        all_steps: List[Tuple[str, str, str]] = question_steps + minigame_steps
+        random.shuffle(all_steps)
+        return all_steps
 
     def _request_unlock_challenge(self) -> bool:
-        """Executa puzzles aleatórios e senha final para permitir desbloqueio."""
+        """Executa N desafios (conforme nível) e senha final. EXTREME: 3 vidas, ao errar 3x reseta os 50."""
         with self._data_lock:
             enabled = self.settings.unlock_difficulty_enabled
             password_hash = self.settings.unlock_password_hash
+            level = self.settings.unlock_difficulty_level
 
         if not enabled:
             return True
@@ -562,25 +880,52 @@ class FocusGuardApp(ctk.CTk):
         if not password_hash:
             return False
 
-        puzzles = self._build_unlock_puzzles()
-        random.shuffle(puzzles)
-        selected_puzzles = puzzles[:3]
+        if level not in UNLOCK_LEVELS:
+            level = "medium"
+        total = UNLOCK_LEVEL_CHALLENGES[level]
+        is_extreme = level == "extreme"
+        lives = EXTREME_LIVES if is_extreme else 1
 
-        for index, (prompt, expected) in enumerate(selected_puzzles, start=1):
-            dialog = ctk.CTkInputDialog(
-                text=f"{prompt}\n\nResposta:",
-                title=f"Desbloqueio seguro ({index}/4)",
-            )
-            typed_answer = dialog.get_input()
-            if typed_answer is None:
-                return False
-            if typed_answer.strip().lower() != expected.strip().lower():
-                self._notify_security_error("Resposta de puzzle incorreta.")
-                return False
+        while True:
+            all_steps = self._build_unlock_steps(total)
+            for index, (kind, prompt_or_name, expected) in enumerate(all_steps, start=1):
+                title_suffix = f" ({index}/{total})" + (f" — {lives} vida(s)" if is_extreme else "")
+                if kind == "q":
+                    dialog = ctk.CTkInputDialog(
+                        text=f"{prompt_or_name}\n\nResposta:",
+                        title=f"Desbloqueio seguro{title_suffix}",
+                    )
+                    typed = dialog.get_input()
+                    if typed is None:
+                        return False
+                    if typed.strip().lower() != expected.strip().lower():
+                        self._notify_security_error("Resposta incorreta.")
+                        if is_extreme:
+                            lives -= 1
+                            if lives <= 0:
+                                self._notify_security_error("3 erros. Recomeçando os 50 desafios.")
+                                lives = EXTREME_LIVES
+                                break
+                            continue
+                        return False
+                else:
+                    method = getattr(self, prompt_or_name, None)
+                    if callable(method) and not method():
+                        self._notify_security_error("Minigame não concluído corretamente.")
+                        if is_extreme:
+                            lives -= 1
+                            if lives <= 0:
+                                self._notify_security_error("3 erros. Recomeçando os 50 desafios.")
+                                lives = EXTREME_LIVES
+                                break
+                            continue
+                        return False
+            else:
+                break
 
         password_dialog = ctk.CTkInputDialog(
             text="Desafio final\nDigite a senha para liberar o bloqueio:",
-            title="Desbloqueio seguro (4/4)",
+            title=f"Desbloqueio seguro ({total + 1}/{total + 1})",
         )
         typed_password = password_dialog.get_input()
         if typed_password is None or not typed_password:
@@ -779,7 +1124,7 @@ class FocusGuardApp(ctk.CTk):
                 variable=switch_var,
                 onvalue="on",
                 offvalue="off",
-                command=lambda g=group_name, var=switch_var: self.set_group_enabled(g, var.get() == "on"),
+                command=lambda g=group_name, var=switch_var, sw=enabled_switch: self.set_group_enabled(g, var.get() == "on", switch_widget=sw),
             )
             enabled_switch.grid(row=0, column=1, padx=(0, 8), pady=2)
             if self.group_enabled.get(group_name, True):
@@ -827,13 +1172,29 @@ class FocusGuardApp(ctk.CTk):
         self.tabview.set("Regras de Horário")
         self.rule_name_entry.focus_force()
 
-    def set_group_enabled(self, group_name: str, enabled: bool) -> None:
-        """Ativa/desativa bloqueio de um bloco específico."""
+    def set_group_enabled(
+        self,
+        group_name: str,
+        enabled: bool,
+        switch_widget: Optional[ctk.CTkSwitch] = None,
+    ) -> None:
+        """Ativa/desativa bloqueio de um bloco específico. Ao desativar, exige desafio se configurado."""
         with self._data_lock:
             if group_name not in self.groups:
                 return
-            self.group_enabled[group_name] = enabled
+            if not enabled and self.settings.unlock_difficulty_enabled:
+                pass
+            else:
+                self.group_enabled[group_name] = enabled
+                self._save_config()
+                return
 
+        if not self._request_unlock_challenge():
+            if switch_widget is not None:
+                switch_widget.select()
+            return
+        with self._data_lock:
+            self.group_enabled[group_name] = False
         self._save_config()
 
     def _refresh_rules_list(self) -> None:
@@ -1373,11 +1734,40 @@ class FocusGuardApp(ctk.CTk):
         )
         set_password_button.pack(padx=20, pady=(0, 8), anchor="w")
 
+        level_label = ctk.CTkLabel(
+            self._settings_window,
+            text="Nível de dificuldade dos desafios:",
+        )
+        level_label.pack(padx=20, pady=(8, 4), anchor="w")
+
+        level_options = [
+            "Fácil (5 desafios)",
+            "Médio (10 desafios)",
+            "Difícil (25 desafios)",
+            "EXTREME (50 desafios, 3 vidas)",
+        ]
+        level_values = ["easy", "medium", "hard", "extreme"]
+        current_level = self.settings.unlock_difficulty_level
+        try:
+            current_index = level_values.index(current_level)
+        except ValueError:
+            current_index = 1
+        self._unlock_level_var = ctk.StringVar(value=level_options[current_index])
+        self._unlock_level_menu = ctk.CTkOptionMenu(
+            self._settings_window,
+            values=level_options,
+            variable=self._unlock_level_var,
+            command=self._on_unlock_level_changed,
+            width=320,
+        )
+        self._unlock_level_menu.pack(padx=20, pady=(0, 8), anchor="w")
+
         security_desc = ctk.CTkLabel(
             self._settings_window,
             text=(
-                "Quando ativado, para desativar o bloqueio será necessário "
-                "resolver 3 puzzles aleatórios e depois informar a senha."
+                "Quando ativado, será necessário resolver a quantidade de desafios "
+                "do nível escolhido (perguntas + minigames) e depois informar a senha. "
+                "EXTREME: 3 vidas; ao errar 3 vezes, os 50 desafios recomeçam."
             ),
             text_color="gray70",
             wraplength=430,
@@ -1428,6 +1818,19 @@ class FocusGuardApp(ctk.CTk):
                 self._tray_icon.notify("Senha de desbloqueio atualizada com sucesso.", "FocusGuard")
             except Exception:
                 return
+
+    def _on_unlock_level_changed(self, choice: str) -> None:
+        """Salva o nível de dificuldade escolhido (Fácil/Médio/Difícil/EXTREME)."""
+        mapping = {
+            "Fácil (5 desafios)": "easy",
+            "Médio (10 desafios)": "medium",
+            "Difícil (25 desafios)": "hard",
+            "EXTREME (50 desafios, 3 vidas)": "extreme",
+        }
+        level = mapping.get(choice, "medium")
+        with self._data_lock:
+            self.settings.unlock_difficulty_level = level
+        self._save_config()
 
     def on_toggle_unlock_difficulty(self) -> None:
         """Ativa/desativa exigência de puzzles e senha ao desbloquear."""
